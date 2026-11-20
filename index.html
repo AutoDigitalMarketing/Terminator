@@ -175,8 +175,7 @@ $("confirm").onclick = async () => {
   $("confirm").disabled = false;
   if (res === "ok") {
     $("dlg").close(); $("name").value = ""; $("email").value = "";
-    setStatus(`Termin je zakazan: ${pendingSlot.replace("T", " u ")}.`);
-    await loadTaken(); selectDay(selectedDay);
+setStatus(`Zahtev je poslat za ${pendingSlot.replace("T", " u ")}. Čeka odobrenje.`);    await loadTaken(); selectDay(selectedDay);
   } else if (res === "taken") {
     $("dlg").close(); setStatus("Taj termin je upravo zauzet. Izaberi drugi.", true);
     await loadTaken(); selectDay(selectedDay);
