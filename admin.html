@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - termini</title>
+<style>
+:root{--bg:#f3f6f8;--card:#fff;--ink:#14232b;--muted:#5d6e77;--line:#d3dde2;--accent:#0f7b6c;--accent-ink:#fff;--err:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1a20;--card:#17262e;--ink:#e8f0f3;--muted:#9bb0ba;--line:#2a3d47;--accent:#3fc2ad;--accent-ink:#06211c;--err:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;line-height:1.5}
+main{max-width:640px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.5rem;margin:0 0 16px}
+h2{font-size:1rem;margin:24px 0 8px;color:var(--muted)}
+input{width:100%;padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
+button{padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);font:600 .95rem inherit;cursor:pointer}
+button.main{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.bad{color:var(--err);border-color:var(--err)}
+.item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px}
+.item b{display:block;font-size:1.05rem}
+.wal{padding:9px 14px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-weight:600;text-decoration:none}
+.acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.msg{color:var(--err);font-weight:600;min-height:1.4em}
+.empty{color:var(--muted)}
+.nav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.wday{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+.wday>b{display:block;margin-bottom:8px;text-transform:capitalize}
+.wslots{display:flex;flex-wrap:wrap;gap:6px}
+.dayacts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.dayacts:empty{display:none}
+.ws{padding:6px 9px;border-radius:7px;font:600 .85rem system-ui,sans-serif;border:1px solid var(--accent)}
+.ws.free{background:transparent;color:var(--accent);cursor:pointer}
+.ws.free:hover{background:var(--accent);color:var(--accent-ink)}
+.ws.busy{background:var(--accent);color:var(--accent-ink)}
+.ws.wait{border-style:dashed;color:var(--ink)}
+.ws.past{border-color:var(--line);color:var(--muted);text-decoration:line-through}
+.top{display:flex;justify-content:space-between;align-items:center}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+<main>
+  <section id="login">
+    <h1>Admin prijava</h1>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="pass" type="password" placeholder="Lozinka" autocomplete="current-password">
+    <button class="main" id="go">Prijavi se</button>
+    <p class="msg" id="lmsg" role="alert"></p>
+  </section>
+  <section id="panel" hidden>
+    <div class="top"><h1>Zahtevi za termine</h1><button id="out">Odjavi se</button></div>
+    <p class="msg" id="pmsg" role="alert"></p>
+    <h2 id="hp">Čekaju odobrenje</h2><div id="pending"></div>
+    <h2>Raspored (klikni slobodan termin da ga zauzmeš iz sveske)</h2>
+    <div class="nav"><button id="prev">← Ranije</button><span id="range"></span><button id="next">Kasnije →</button></div>
+    <div id="week"></div>
+    <h2>Odobreni</h2><div id="approved"></div>
+  </section>
+</main>
+<script>
+const URL_ = "https://pxdyohegxvqhhawnbuju.supabase.co";
+const KEY = "sb_publishable_7iN6lWxS5srh_rRnoaahkg_tI5c2zaB";
+const $ = id => document.getElementById(id);
+let token = null;
+
+const h = () => ({apikey: KEY, Authorization: "Bearer " + token, "Content-Type": "application/json"});
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function show(loggedIn) { $("login").hidden = loggedIn; $("panel").hidden = !loggedIn; }
+
+$("go").onclick = async () => {
+  $("lmsg").textContent = "";
+  const r = await fetch(URL_ + "/auth/v1/token?grant_type=password", {
+    method: "POST", headers: {apikey: KEY, "Content-Type": "application/json"},
+    body: JSON.stringify({email: $("email").value.trim(), password: $("pass").value})
+  });
+  if (!r.ok) { $("lmsg").textContent = "Pogrešan email ili lozinka."; return; }
+  token = (await r.json()).access_token;
+  $("pass").value = ""; show(true); load();
+};
+
+$("out").onclick = () => { token = null; show(false); };
+
+async function load() {
+  $("pmsg").textContent = ""; $("pmsg").style.color = "";
+  const today = new Date().toISOString().slice(0, 10);
+  const r = await fetch(`${URL_}/rest/v1/bookings?select=*&slot=gte.${today}&order=slot.asc`, {headers: h()});
+  if (r.status === 401) { token = null; show(false); $("lmsg").textContent = "Sesija je istekla. Prijavi se ponovo."; return; }
+  if (!r.ok) { $("pmsg").textContent = "Ne mogu da učitam zahteve."; return; }
+  const rows = await r.json();
+  allRows = rows; renderWeek();
+  const np = rows.filter(x => x.status === "pending").length;
+  $("hp").textContent = `Čekaju odobrenje (${np})`;
+  $("hp").style.color = np ? "var(--err)" : "";
+  render("pending", rows.filter(x => x.status === "pending"), true);
+  render("approved", rows.filter(x => x.status === "approved"), false);
+}
+
+const GRID = {start: 9, end: 17, step: 30};   // isto kao u index.html
+const DAYOFF = "SLOBODAN DAN";
+let allRows = [], weekOffset = 0;
+const pad = n => String(n).padStart(2, "0");
+const dk = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const sr = (d, o) => d.toLocaleDateString("sr-Latn", o);
+
+function renderWeek() {
+  const start = new Date(); start.setHours(0,0,0,0); start.setDate(start.getDate() + weekOffset * 7);
+  const end = new Date(start); end.setDate(end.getDate() + 6);
+  $("range").textContent = `${sr(start, {day: "numeric", month: "short"})} – ${sr(end, {day: "numeric", month: "short"})}`;
+  $("prev").disabled = weekOffset <= 0;
+  const by = {}; allRows.forEach(x => by[x.slot] = x);
+  const now = new Date(); let html = "";
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    html += `<div class="wday"><b>${sr(d, {weekday: "long", day: "numeric", month: "numeric"})}</b><div class="wslots">`;
+    let free = 0, off = 0;
+    for (let m = GRID.start * 60; m + GRID.step <= GRID.end * 60; m += GRID.step) {
+      const t = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`, key = `${dk(d)}T${t}`, x = by[key];
+      if (x) { if (x.name === DAYOFF) off++; html += `<span class="ws ${x.status === "approved" ? "busy" : "wait"}">${t} ${esc(x.name)}${x.item ? " · " + esc(x.item) : ""}${x.status === "pending" ? " (čeka)" : ""}</span>`; }
+      else if (new Date(`${key}:00`) < now) html += `<span class="ws past">${t}</span>`;
+      else { free++; html += `<button class="ws free" data-strike="${key}">${t}</button>`; }
+    }
+    html += `</div><div class="dayacts">`;
+    if (free) html += `<button class="bad" data-dayoff="${dk(d)}">SLOBODAN DAN</button>`;
+    if (off) html += `<button data-dayon="${dk(d)}">Ukloni slobodan dan</button>`;
+    html += `</div></div>`;
+  }
+  $("week").innerHTML = html;
+}
+
+$("prev").onclick = () => { if (weekOffset > 0) { weekOffset--; renderWeek(); } };
+$("next").onclick = () => { if (weekOffset < 4) { weekOffset++; renderWeek(); } };
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button[data-strike]"); if (!b) return;
+  const key = b.dataset.strike;
+  const txt = prompt(`Zauzimaš termin ${key.replace("T", " u ")}.\nUpiši tekst za ovaj termin (npr. ime) ili ostavi prazno za SVESKA.\nKlikom na OK termin se zauzima.`, "");
+  if (txt === null) return;   // Cancel: ništa se ne upisuje
+  const name = (txt.trim() || "SVESKA").slice(0, 80);
+  if (name.length < 2) { $("pmsg").style.color = ""; $("pmsg").textContent = "Tekst mora imati bar 2 znaka."; return; }
+  b.disabled = true;
+  const r = await fetch(`${URL_}/rest/v1/bookings`, {method: "POST", headers: h(),
+    body: JSON.stringify({slot: key, name, source: "sveska", status: "approved"})});
+  $("pmsg").style.color = "";
+  if (r.status === 409) $("pmsg").textContent = "Termin je u međuvremenu zauzet.";
+  else if (!r.ok) $("pmsg").textContent = "Zauzimanje nije uspelo.";
+  load();
+});
+
+document.addEventListener("click", async e => {
+  const off = e.target.closest("button[data-dayoff]"), on = e.target.closest("button[data-dayon]");
+  if (!off && !on) return;
+  const day = (off || on).dataset.dayoff || (off || on).dataset.dayon;
+  const nice = day.split("-").reverse().join(".");
+  $("pmsg").style.color = "";
+  let r;
+  if (off) {
+    const now = new Date();
+    const slots = [];
+    for (let m = GRID.start * 60; m + GRID.step <= GRID.end * 60; m += GRID.step) {
+      const key = `${day}T${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+      if (!allRows.some(x => x.slot === key) && new Date(`${key}:00`) > now) slots.push(key);
+    }
+    if (!slots.length) return;
+    if (!confirm(`SLOBODAN DAN ${nice}.\nZauzima se još ${slots.length} slobodnih termina (već zauzeti ostaju kakvi jesu).\nDa li ste sigurni?`)) return;
+    r = await fetch(`${URL_}/rest/v1/bookings`, {method: "POST", headers: h(),
+      body: JSON.stringify(slots.map(slot => ({slot, name: DAYOFF, source: "sveska", status: "approved"})))});
+  } else {
+    if (!confirm(`Ukloniti SLOBODAN DAN za ${nice}.? Termini upisani kao „${DAYOFF}“ postaju slobodni.`)) return;
+    r = await fetch(`${URL_}/rest/v1/bookings?slot=like.${encodeURIComponent(day + "T*")}&name=eq.${encodeURIComponent(DAYOFF)}`, {method: "DELETE", headers: h()});
+  }
+  if (!r.ok) $("pmsg").textContent = "Radnja nije uspela. Osveži i probaj ponovo.";
+  load();
+});
+
+function contactLinks(x) {
+  if (!x.phone) return "";
+  const text = `Zdravo ${x.name}, vaš termin ${x.slot.replace("T", " u ")} je potvrđen.`;
+  const p = esc(x.phone), t = encodeURIComponent(text);
+  return `
+    <a class="wal" target="_blank" rel="noopener" href="https://wa.me/${p}?text=${t}">WhatsApp</a>
+    <a class="wal" href="viber://chat?number=%2B${p}" data-copy="${esc(text)}">Viber</a>
+    <a class="wal" href="sms:+${p}?&body=${t}">SMS</a>`;
+}
+
+document.addEventListener("click", e => {
+  const a = e.target.closest("a[data-copy]"); if (!a) return;
+  navigator.clipboard?.writeText(a.dataset.copy).then(() => {
+    $("pmsg").style.color = "var(--accent)";
+    $("pmsg").textContent = "Poruka je kopirana. Nalepi je u Viber i pošalji.";
+  }).catch(() => {});
+});
+
+function render(id, rows, canApprove) {
+  const box = $(id);
+  if (!rows.length) { box.innerHTML = '<p class="empty">Nema.</p>'; return; }
+  box.innerHTML = rows.map(x => `
+    <div class="item">
+      <b>${esc(x.slot.replace("T", " u "))}</b>
+      ${esc(x.name)} · ${esc(x.phone || "sveska")}${x.item ? " · " + esc(x.item) : ""}
+      <div class="acts">
+        ${contactLinks(x)}
+        ${canApprove ? `<button class="main" data-a="ok" data-s="${esc(x.slot)}">Odobri</button>` : ""}
+        <button class="bad" data-a="del" data-s="${esc(x.slot)}">${canApprove ? "Odbij" : "Otkaži"}</button>
+      </div>
+    </div>`).join("");
+}
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button[data-a]"); if (!b) return;
+  const slot = encodeURIComponent(b.dataset.s), url = `${URL_}/rest/v1/bookings?slot=eq.${slot}`;
+  if (b.dataset.a === "del" && !confirm("Sigurno? Termin će postati slobodan.")) return;
+  b.disabled = true;
+  const r = b.dataset.a === "ok"
+    ? await fetch(url, {method: "PATCH", headers: h(), body: JSON.stringify({status: "approved"})})
+    : await fetch(url, {method: "DELETE", headers: h()});
+  if (!r.ok) $("pmsg").textContent = "Radnja nije uspela.";
+  load();
+});
+</script>
+</body>
+</html>
